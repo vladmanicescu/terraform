@@ -12,132 +12,85 @@ provider "aws" {
   region = "us-east-1"
 }
 
-data "aws_iam_policy_document" "assume_role" {
-  statement {
-    effect = "Allow"
+resource "aws_vpc" "clouddev" {
+  cidr_block           = var.cidr_block
+  enable_dns_hostnames = true
+  enable_dns_support   = true
+}
 
-    principals {
-      type        = "Service"
-      identifiers = ["eks.amazonaws.com"]
-    }
+resource "aws_subnet" "clouddevel" {
+  cidr_block        = cidrsubnet(aws_vpc.clouddev.cidr_block, 3, 1)
+  vpc_id            = aws_vpc.clouddev.id
+  availability_zone = var.availability_zone
+}
 
-    actions = ["sts:AssumeRole"]
+resource "aws_internet_gateway" "clouddev_gw" {
+  vpc_id = aws_vpc.clouddev.id
+}
+
+resource "aws_route_table" "clouddevel" {
+  vpc_id = aws_vpc.clouddev.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.clouddev_gw.id
   }
 }
 
-resource "aws_iam_role" "clouddevel" {
-  name               = "eks-cluster-${var.cluster-name}"
-  assume_role_policy = data.aws_iam_policy_document.assume_role.json
+resource "aws_route_table_association" "clouddevel" {
+  subnet_id      = aws_subnet.clouddevel.id
+  route_table_id = aws_route_table.clouddevel.id
 }
 
-resource "aws_iam_role_policy_attachment" "example-AmazonEKSClusterPolicy" {
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
-  role       = aws_iam_role.clouddevel.name
-}
+resource "aws_security_group" "clouddev" {
+  name = "allow-all"
 
-resource "aws_iam_role_policy_attachment" "example-AmazonEKSVPCResourceController" {
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSVPCResourceController"
-  role       = aws_iam_role.clouddevel.name
-}
+  vpc_id = aws_vpc.clouddev.id
 
-# Create a VPC for the kubernetes cluster in which we will deploy our apps
-module "vpc" {
-  source = "terraform-aws-modules/vpc/aws"
+  ingress {
+    cidr_blocks = [
+      "0.0.0.0/0"
+    ]
+    from_port = 22
+    to_port   = 22
+    protocol  = "tcp"
+  }
 
-  name = var.cluster-name
-  cidr = var.vpc_cidr
-
-  azs             = var.azs
-  private_subnets = var.private_subnets
-  public_subnets  = var.public_subnets
-
-  enable_nat_gateway = true
-  enable_vpn_gateway = false
-
-  tags = {
-    Terraform = "true"
-    Environment = "dev"
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = -1
+    cidr_blocks = ["0.0.0.0/0"]
   }
 }
 
-module "eks" {
-  source  = "terraform-aws-modules/eks/aws"
-  version = "~> 20.0"
-
-  cluster_name    = var.cluster-name
-  cluster_version = "1.31"
-
-  cluster_endpoint_public_access  = true
-
-  cluster_addons = {
-    coredns                = {}
-    eks-pod-identity-agent = {}
-    kube-proxy             = {}
-    vpc-cni                = {}
-  }
-
-  vpc_id                   = module.vpc.vpc_id
-  subnet_ids               = module.vpc.private_subnets
-
-  # EKS Managed Node Group(s)
-  eks_managed_node_group_defaults = {
-    instance_types = ["m6i.large", "m5.large", "m5n.large", "m5zn.large"]
-  }
-
-  eks_managed_node_groups = {
-    clouddevel = {
-      # Starting on 1.30, AL2023 is the default AMI type for EKS managed node groups
-      ami_type       = "AL2023_x86_64_STANDARD"
-      instance_types = ["m5.xlarge"]
-
-      min_size     = 2
-      max_size     = 10
-      desired_size = 2
-    }
-  }
-
-  # Cluster access entry
-  # To add the current caller identity as an administrator
-  enable_cluster_creator_admin_permissions = true
-
-  access_entries = {
-    # One access entry with a policy associated
-#     example = {
-#       principal_arn     = "arn:aws:iam::123456789012:role/something"
-#
-#       policy_associations = {
-#         example = {
-#           policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSViewPolicy"
-#           access_scope = {
-#             namespaces = ["default"]
-#             type       = "namespace"
-#           }
-#         }
-#       }
-#     }
-  }
-
-  tags = {
-    Environment = "dev"
-    Terraform   = "true"
-  }
+resource "aws_key_pair" "clouddev" {
+  key_name   = var.key_pair_name
+    public_key = tls_private_key.clouddev.public_key_openssh
 }
 
+resource "tls_private_key" "clouddev" {
+  algorithm = "RSA"
+  rsa_bits  = 2048
+}
 
+resource "local_file" "tf_key" {
+  content  = tls_private_key.clouddev.private_key_pem
+  filename = var.file_name
 
-module "ec2_instance" {
-  source = "terraform-aws-modules/ec2-instance/aws"
+}
 
-  name = "bastion_k8s"
+resource "aws_instance" "test_env_ec2" {
+  count                       = var.counter
+  ami           = var.ami
+  instance_type = var.instance_type
+  key_name      = var.key_pair_name
+  security_groups             = [aws_security_group.clouddev.id]
   associate_public_ip_address = true
-  instance_type          = "t2.micro"
-  monitoring             = true
-  # vpc_security_group_ids = module.eks.cluster_primary_security_group_id
-  subnet_id              = module.vpc.private_subnets[0]
-  key_name               = "clouddevel"
+
+  subnet_id = aws_subnet.clouddevel.id
 
   tags = {
-    Terraform   = "true"
-    Environment = "dev"
+    Name = "${var.instance_tag}-${ count.index }"
   }
 }
