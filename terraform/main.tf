@@ -64,6 +64,24 @@ resource "aws_security_group" "clouddev" {
   }
 }
 
+resource "aws_security_group_rule" "allow_kib_access" {
+  type              = "ingress"
+  from_port         = 5601
+  to_port           = 5601
+  protocol          = "tcp"
+  cidr_blocks       = ["0.0.0.0/0"]
+  security_group_id = aws_security_group.clouddev.id
+}
+
+resource "aws_security_group_rule" "allow_es_access" {
+  type              = "ingress"
+  from_port         = 9200
+  to_port           = 9200
+  protocol          = "tcp"
+  cidr_blocks       = ["0.0.0.0/0"]
+  security_group_id = aws_security_group.clouddev.id
+}
+
 resource "aws_key_pair" "clouddev" {
   key_name   = var.key_pair_name
     public_key = tls_private_key.clouddev.public_key_openssh
@@ -75,8 +93,9 @@ resource "tls_private_key" "clouddev" {
 }
 
 resource "local_file" "tf_key" {
-  content  = tls_private_key.clouddev.private_key_pem
-  filename = var.file_name
+  content         = tls_private_key.clouddev.private_key_pem
+  filename        = var.file_name
+  file_permission = "0400"
 
 }
 
@@ -92,5 +111,28 @@ resource "aws_instance" "test_env_ec2" {
 
   tags = {
     Name = "${var.instance_tag}-${ count.index }"
+  }
+
+  # Provisioners for configuring the EC2 instance after it's launched
+  provisioner "file" {
+    source      = "./scripts/deploy_elastic_in_docker.sh"  # Source path of the file to transfer
+    destination = "/tmp/deploy_elastic_in_docker.sh"       # Destination path on the instance
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "chmod +x /tmp/deploy_elastic_in_docker.sh",         # Make the script executable
+      "/tmp/deploy_elastic_in_docker.sh",
+      "sudo docker ps -a | grep elasticsearch | awk '{print $1}' | xargs sudo docker container logs | grep -a1 Password",
+      "sudo docker ps -a | grep elasticsearch | awk '{print $1}' | xargs sudo docker container logs | grep -a1 'Copy the following enrollment token and paste it into Kibana in your browser'", # Execute the script
+    ]
+  }
+
+  # Connection block to specify how Terraform connects to the instance for provisioning
+  connection {
+    type        = "ssh"
+    user        = "ubuntu"             # Default username for Ubuntu AMIs
+    private_key = file(var.file_name)  # Private key for SSH access
+    host        = self.public_ip       # Use the instance's public IP address for SSH connection
   }
 }
