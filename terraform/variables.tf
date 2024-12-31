@@ -1,24 +1,40 @@
-variable "cluster-name" {
-  default = "develop_cluster"
-  type    = string
+variable "key_pair_name" {
+  description = "key_pair_name"
+  type        = string
 }
 
-variable "azs" {
-  default = ["us-east-1a", "us-east-1b", "us-east-1c"]
-  type    = list(string)
+variable "instance_type" {
+  description       = "instance_type"
+  type              = string
 }
 
-variable "vpc_cidr" {
-  default = "10.0.0.0/16"
-  type    = string
+variable "instance_tag" {
+  description     = "Tag given to each deployed Instance"
+  type            = string
 }
 
-variable "private_subnets"{
-  default = ["10.0.1.0/24", "10.0.2.0/24"]
-  type    = list(string)
+
+variable "counter" {
+  description     = "Number of instances to launch"
+  type            = number
 }
 
-variable "public_subnets" {
-  default = ["10.0.101.0/24"]
-  type    = list(string)
+variable "file_name" {
+  description     = "Name of the key pair"
+  type            = string
+}
+
+variable "cidr_block" {
+  description     = "CIDR Block"
+  type            = string
+}
+
+variable "availability_zone"{
+  description    = "Availability Zones for the Subnet"
+  type           = string
+}
+
+variable "ami"{
+  description    = "Ami of the machine we are about to create"
+  type           = string
 }
